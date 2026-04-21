@@ -1,0 +1,218 @@
+---
+title: "Employee Satisfaction Survey Analysis"
+author: "Ibrahim Adippe"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 10, fig.height = 6)
+
+library(tidyverse)
+library(scales)
+library(knitr)
+library(kableExtra)
+
+# Load data
+survey <- read.csv("employee_survey.csv", stringsAsFactors = FALSE)
+```
+
+# Executive Summary
+
+This report analyzes employee satisfaction data from a company-wide survey of **`r nrow(survey)` employees** across `r length(unique(survey$department))` departments.
+
+```{r summary_stats, echo=FALSE}
+avg_satisfaction <- mean(survey$q1_satisfaction, na.rm = TRUE)
+pct_would_refer <- mean(survey$would_refer_friend == "Yes", na.rm = TRUE) * 100
+lowest_score_area <- c(
+  "Job Satisfaction" = mean(survey$q1_satisfaction, na.rm = TRUE),
+  "Work-Life Balance" = mean(survey$q2_worklife_balance, na.rm = TRUE),
+  "Manager Support" = mean(survey$q3_manager_support, na.rm = TRUE),
+  "Career Growth" = mean(survey$q4_career_growth, na.rm = TRUE),
+  "Would Recommend" = mean(survey$q5_recommend, na.rm = TRUE)
+)
+weakest_area <- names(which.min(lowest_score_area))
+```
+
+- **Average job satisfaction:** `r round(avg_satisfaction, 2)` / 5.0
+- **`r round(pct_would_refer, 1)`%** would refer a friend to work here
+- **Weakest area:** `r weakest_area` (avg `r round(min(lowest_score_area), 2)`/5)
+
+# 1. Demographics
+
+```{r demographics, echo=FALSE}
+dept_summary <- survey %>%
+  count(department, name = "employees") %>%
+  mutate(percentage = percent(employees / sum(employees))) %>%
+  arrange(desc(employees))
+
+kable(dept_summary, 
+      col.names = c("Department", "Employees", "% of Total"),
+      caption = "Distribution by Department") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+```{r dept_chart}
+survey %>%
+  count(department) %>%
+  mutate(department = fct_reorder(department, n)) %>%
+  ggplot(aes(x = department, y = n, fill = department)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = n), hjust = -0.2, size = 4) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Employees by Department",
+       x = NULL, y = "Number of Employees") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+# 2. Satisfaction Scores by Category
+
+```{r satisfaction_overview}
+scores <- survey %>%
+  summarise(
+    `Job Satisfaction` = mean(q1_satisfaction, na.rm = TRUE),
+    `Work-Life Balance` = mean(q2_worklife_balance, na.rm = TRUE),
+    `Manager Support` = mean(q3_manager_support, na.rm = TRUE),
+    `Career Growth` = mean(q4_career_growth, na.rm = TRUE),
+    `Would Recommend` = mean(q5_recommend, na.rm = TRUE),
+    `Salary Satisfaction` = mean(salary_satisfaction, na.rm = TRUE)
+  ) %>%
+  pivot_longer(everything(), names_to = "category", values_to = "avg_score")
+
+scores %>%
+  mutate(category = fct_reorder(category, avg_score)) %>%
+  ggplot(aes(x = category, y = avg_score, fill = avg_score)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = round(avg_score, 2)), hjust = -0.2, size = 4) +
+  coord_flip() +
+  scale_fill_gradient(low = "#E74C3C", high = "#27AE60") +
+  scale_y_continuous(limits = c(0, 5), breaks = 0:5) +
+  labs(title = "Average Scores by Category (1-5 Scale)",
+       subtitle = "Higher = better. Color indicates performance.",
+       x = NULL, y = "Average Score") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+# 3. Satisfaction by Department
+
+```{r dept_satisfaction}
+dept_scores <- survey %>%
+  group_by(department) %>%
+  summarise(
+    `Job Satisfaction` = mean(q1_satisfaction, na.rm = TRUE),
+    `Work-Life Balance` = mean(q2_worklife_balance, na.rm = TRUE),
+    `Manager Support` = mean(q3_manager_support, na.rm = TRUE),
+    `Career Growth` = mean(q4_career_growth, na.rm = TRUE)
+  ) %>%
+  pivot_longer(-department, names_to = "metric", values_to = "score")
+
+ggplot(dept_scores, aes(x = department, y = metric, fill = score)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = round(score, 2)), color = "white", fontface = "bold") +
+  scale_fill_gradient2(low = "#E74C3C", mid = "#F39C12", high = "#27AE60",
+                       midpoint = 3, limits = c(1, 5)) +
+  labs(title = "Satisfaction Heatmap: Department × Category",
+       x = NULL, y = NULL, fill = "Score") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# 4. Impact of Work Mode
+
+Does where people work affect their satisfaction?
+
+```{r work_mode_impact}
+work_mode_stats <- survey %>%
+  group_by(work_mode) %>%
+  summarise(
+    n = n(),
+    avg_satisfaction = round(mean(q1_satisfaction, na.rm = TRUE), 2),
+    avg_worklife = round(mean(q2_worklife_balance, na.rm = TRUE), 2),
+    avg_career = round(mean(q4_career_growth, na.rm = TRUE), 2),
+    pct_would_refer = round(mean(would_refer_friend == "Yes", na.rm = TRUE) * 100, 1)
+  )
+
+kable(work_mode_stats,
+      col.names = c("Work Mode", "N", "Job Satisfaction", 
+                    "Work-Life Balance", "Career Growth", "% Refer Friend"),
+      caption = "Satisfaction Metrics by Work Mode") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+```{r work_mode_chart}
+survey %>%
+  select(work_mode, q1_satisfaction, q2_worklife_balance) %>%
+  pivot_longer(-work_mode, names_to = "metric", values_to = "score") %>%
+  mutate(metric = recode(metric,
+                         q1_satisfaction = "Job Satisfaction",
+                         q2_worklife_balance = "Work-Life Balance")) %>%
+  ggplot(aes(x = work_mode, y = score, fill = work_mode)) +
+  geom_boxplot(show.legend = FALSE, alpha = 0.8) +
+  facet_wrap(~metric) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Score Distribution by Work Mode",
+       x = NULL, y = "Score (1-5)") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"))
+```
+
+# 5. Referral Intent
+
+```{r nps}
+refer_stats <- survey %>%
+  count(would_refer_friend) %>%
+  mutate(pct = n / sum(n) * 100,
+         would_refer_friend = factor(would_refer_friend, 
+                                     levels = c("Yes", "Maybe", "No")))
+
+ggplot(refer_stats, aes(x = "", y = pct, fill = would_refer_friend)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_manual(values = c("Yes" = "#27AE60", 
+                               "Maybe" = "#F39C12", 
+                               "No" = "#E74C3C")) +
+  geom_text(aes(label = paste0(round(pct, 1), "%")), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", fontface = "bold", size = 5) +
+  labs(title = "Would You Refer a Friend to Work Here?",
+       fill = "Response") +
+  theme_void(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+```
+
+# 6. Key Recommendations
+
+```{r recommendations, echo=FALSE, results='asis'}
+weakest <- scores %>% arrange(avg_score) %>% head(2) %>% pull(category)
+strongest <- scores %>% arrange(desc(avg_score)) %>% head(2) %>% pull(category)
+
+cat("**Priority areas for improvement:**\n\n")
+cat(paste0("- ", weakest, "\n"), sep = "")
+cat("\n**Areas performing well (maintain):**\n\n")
+cat(paste0("- ", strongest, "\n"), sep = "")
+```
+
+# Methodology
+
+- **Sample size:** `r nrow(survey)` employees
+- **Scale:** 1 (Strongly Disagree) to 5 (Strongly Agree)
+- **Missing data:** Handled with pairwise deletion (`na.rm = TRUE`)
+- **Tools:** R `r paste(R.version$major, R.version$minor, sep=".")`, tidyverse, ggplot2
+
+---
+
+*Report generated on `r format(Sys.Date(), "%B %d, %Y")`*
